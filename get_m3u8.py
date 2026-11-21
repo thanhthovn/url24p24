@@ -18,11 +18,20 @@ PLAY_BUTTON = (
 def wait_for_playlist(page, url, headless, browser_error):
     playlist_url = None
     playlist_statuses = set()
+    player_http_errors = set()
+    dash_statuses = set()
+    page_errors = []
+
+    page.on("pageerror", lambda _: page_errors.append(None))
 
     def inspect_response(response):
         nonlocal playlist_url
         path = urlsplit(response.url).path.lower()
         mime = response.headers.get("content-type", "").lower()
+        if response.status >= 400 and response.request.resource_type in {"xhr", "fetch", "media"}:
+            player_http_errors.add(response.status)
+        if path.endswith(".mpd") or "dash+xml" in mime:
+            dash_statuses.add(response.status)
         if path.endswith(".m3u8") or "mpegurl" in mime:
             playlist_statuses.add(response.status)
             if response.ok and playlist_url is None:
@@ -65,16 +74,20 @@ def wait_for_playlist(page, url, headless, browser_error):
     if playlist_url is None:
         page_status = navigation.status if navigation else "không có"
         hls_status = ", ".join(map(str, sorted(playlist_statuses))) or "không quan sát được"
+        dash_status = ", ".join(map(str, sorted(dash_statuses))) or "không quan sát được"
+        http_errors = ", ".join(map(str, sorted(player_http_errors))) or "không quan sát được"
         print(
             f"Hết thời gian chờ playlist HLS. HTTP trang: {page_status}. "
             f"HTTP playlist: {hls_status}. Số nút phát đã bấm: {len(clicked_frames)}. "
-            f"Số video tối đa trong một khung: {video_count}.",
+            f"Số video tối đa trong một khung: {video_count}. "
+            f"HTTP DASH: {dash_status}. HTTP lỗi (XHR/fetch/media): {http_errors}. "
+            f"Số lỗi JavaScript: {len(page_errors)}.",
             file=sys.stderr,
         )
     return playlist_url
 
 
-def capture_hls(url, headless):
+def capture_hls(url, headless, browser_channel=None):
     try:
         from playwright.sync_api import Error, sync_playwright
     except ImportError:
@@ -83,7 +96,7 @@ def capture_hls(url, headless):
 
     try:
         with sync_playwright() as playwright:
-            channel = "chromium" if headless else "msedge"
+            channel = browser_channel or ("chromium" if headless else "msedge")
             browser = playwright.chromium.launch(channel=channel, headless=headless)
             try:
                 page = browser.new_page()
@@ -106,6 +119,7 @@ def main():
     parser.add_argument("url", nargs="?")
     parser.add_argument("quality", nargs="?", default="best")
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--browser-channel", choices=("chromium", "chrome", "msedge"))
     args = parser.parse_args()
 
     url = args.url
@@ -128,7 +142,7 @@ def main():
     try:
         streams = Streamlink().streams(url)
     except NoPluginError:
-        return capture_hls(url, args.headless)
+        return capture_hls(url, args.headless, args.browser_channel)
     except StreamlinkError as exc:
         print(f"Lỗi khi đọc trang: {exc or type(exc).__name__}", file=sys.stderr)
         return 1
