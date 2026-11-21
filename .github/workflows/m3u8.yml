@@ -31,4 +31,11 @@ jobs:
         env:
           STREAM_URL: ${{ inputs.url }}
           STREAM_QUALITY: ${{ inputs.quality }}
-        run: python get_m3u8.py --headless -- "$STREAM_URL" "$STREAM_QUALITY"
+        shell: bash
+        run: python get_m3u8.py --headless -- "$STREAM_URL" "$STREAM_QUALITY" | tee result.txt
+      - name: Upload result.txt
+        uses: actions/upload-artifact@v4
+        with:
+          name: result
+          path: result.txt
+          if-no-files-found: error
